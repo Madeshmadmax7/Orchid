@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+  <!-- Flower petals -->
+  <path d="M12 2C13.5 2 15 4.5 15 7C15 9.5 12 11 12 11C12 11 9 9.5 9 7C9 4.5 10.5 2 12 2Z" />
+  <path d="M22 12C22 13.5 19.5 15 17 15C14.5 15 13 12 13 12C13 12 14.5 9 17 9C19.5 9 22 10.5 22 12Z" />
+  <path d="M12 22C10.5 22 9 19.5 9 17C9 14.5 12 13 12 13C12 13 15 14.5 15 17C15 19.5 13.5 22 12 22Z" />
+  <path d="M2 12C2 10.5 4.5 9 7 9C9.5 9 11 12 11 12C11 12 9.5 15 7 15C4.5 15 2 13.5 2 12Z" />
+  <!-- Center -->
+  <circle cx="12" cy="12" r="2" />
+</svg>

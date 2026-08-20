@@ -1,0 +1,119 @@
+{
+  "name": "orchid",
+  "displayName": "Orchid",
+  "description": "AI Context Optimization — Analyze once, store intelligence, retrieve selectively.",
+  "version": "0.1.0",
+  "publisher": "orchid-dev",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Other"
+  ],
+  "keywords": [
+    "ai",
+    "copilot",
+    "context",
+    "memory",
+    "project",
+    "analysis",
+    "dependency",
+    "graph"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "projectMemory.analyzeProject",
+        "title": "Orchid: Analyze Project",
+        "icon": "$(search-refresh)"
+      },
+      {
+        "command": "projectMemory.reindexChanged",
+        "title": "Orchid: Reindex Changed Files",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "projectMemory.clearCache",
+        "title": "Orchid: Clear Cache",
+        "icon": "$(trash)"
+      },
+
+      {
+        "command": "projectMemory.search",
+        "title": "Orchid: Search Symbols",
+        "category": "Orchid"
+      },
+      {
+        "command": "projectMemory.showOverview",
+        "title": "Orchid: Show Project Overview"
+      }
+    ],
+    "chatParticipants": [
+      {
+        "id": "orchid.participant",
+        "name": "orchid",
+        "description": "Ask questions about your codebase using Orchid context",
+        "isSticky": true
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "project-memory",
+          "title": "Orchid",
+          "icon": "resources/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "project-memory": [
+        {
+          "id": "projectMemory.overview",
+          "name": "Project Overview",
+          "type": "webview"
+        },
+        {
+          "id": "projectMemory.components",
+          "name": "Components"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "projectMemory.analyzeProject",
+          "when": "view == projectMemory.components",
+          "group": "navigation"
+        },
+        {
+          "command": "projectMemory.reindexChanged",
+          "when": "view == projectMemory.components",
+          "group": "navigation"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run build",
+    "build": "node esbuild.js --production",
+    "watch": "node esbuild.js --watch",
+    "compile": "tsc -p ./",
+    "lint": "eslint src --ext ts",
+    "pretest": "npm run compile",
+    "test": "node ./out/test/runTest.js"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.95.0",
+    "@types/mocha": "^10.0.6",
+    "@vscode/test-electron": "^2.3.8",
+    "esbuild": "^0.20.0",
+    "mocha": "^10.3.0",
+    "typescript": "^5.4.0"
+  }
+}
