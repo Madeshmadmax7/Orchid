@@ -74,13 +74,18 @@ export type RelationshipType =
   | 'QUERIES'
   | 'CALLS_API'
   | 'RENDERS'
-  | 'COMPOSES';
+  | 'COMPOSES'
+  | 'CONTAINS';
 
 // ============================================================================
 // Symbol Information
 // ============================================================================
 
 export interface SymbolInfo {
+  /** Stable unique identifier (fileId#parentId.name:kind) */
+  id: string;
+  /** Content hash of the symbol's AST body for incremental indexing */
+  hash?: string;
   /** Symbol name */
   name: string;
   /** Kind of symbol */
@@ -108,6 +113,10 @@ export interface SymbolInfo {
     extends?: string[];
     implements?: string[];
   };
+  /** Outgoing calls from this symbol (e.g., 'PaymentService.verify') */
+  calls?: string[];
+  /** Error signals (e.g. string literals from throw statements) */
+  throws?: string[];
   /** AI generated description of this specific symbol */
   summary?: string;
 }
@@ -131,6 +140,8 @@ export interface ImportInfo {
   resolvedPath?: string;
   /** Whether the import is from a local file (vs node_modules) */
   isLocal: boolean;
+  /** True if none of the specifiers appear to be used in the file */
+  isUnused?: boolean;
 }
 
 export interface ExportInfo {
@@ -257,7 +268,7 @@ export interface AnalysisError {
 // Constants
 // ============================================================================
 
-export const SCHEMA_VERSION = '1.0.0';
+export const SCHEMA_VERSION = '2.0.0';
 export const STORAGE_DIR = '.project-memory';
 export const FILES_DIR = 'files';
 export const PROJECT_FILE = 'project.json';
@@ -280,18 +291,34 @@ export const SUPPORTED_EXTENSIONS = Object.keys(LANGUAGE_MAP);
 
 export interface RetrievedContext {
   id: string;
-  type: 'file' | 'symbol' | 'dependency';
+  type: 'symbol' | 'file';
   content: string;
   relevanceScore: number;
   filePath: string;
   metadata?: Record<string, any>;
+  
+  // Optional raw objects for dynamic multi-level context representation
+  symbolInfo?: SymbolInfo;
+  fileMeta?: FileMetadata;
 }
+
+export type QueryIntent =
+  | 'CALLERS'
+  | 'DEPENDENCIES'
+  | 'DEPENDENTS'
+  | 'USAGE'
+  | 'EXPLAIN'
+  | 'ERROR_VALIDATION'
+  | 'MODIFICATION'
+  | 'GENERAL';
 
 export interface RetrievalQuery {
   rawQuery: string;
   keywords: string[];
   targetSymbols: string[];
   targetFiles: string[];
+  intent: QueryIntent;
+  concepts: string[];
   maxResults?: number;
 }
 

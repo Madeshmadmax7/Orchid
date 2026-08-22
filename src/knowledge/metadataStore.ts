@@ -17,7 +17,7 @@ import {
   PROJECT_FILE,
   GRAPH_FILE,
 } from '../types';
-import { pathToStorageKey } from '../utils/fileUtils';
+import { pathToStorageKey, normalizePath } from '../utils/fileUtils';
 
 /**
  * Manages persistent storage of project analysis data.
@@ -68,7 +68,8 @@ export class MetadataStore {
     const fileUri = vscode.Uri.joinPath(this.filesUri, `${key}.json`);
     try {
       const data = await vscode.workspace.fs.readFile(fileUri);
-      return JSON.parse(Buffer.from(data).toString('utf-8')) as FileMetadata;
+      const metadata = JSON.parse(Buffer.from(data).toString('utf-8')) as FileMetadata;
+      return this.migrateFileMetadata(metadata);
     } catch {
       return null;
     }
@@ -89,7 +90,7 @@ export class MetadataStore {
             const metadata = JSON.parse(
               Buffer.from(data).toString('utf-8')
             ) as FileMetadata;
-            results.push(metadata);
+            results.push(this.migrateFileMetadata(metadata));
           } catch {
             // Skip corrupted files
           }
@@ -99,6 +100,28 @@ export class MetadataStore {
       // Directory may not exist yet
     }
     return results;
+  }
+
+  /**
+   * Safely migrates older FileMetadata versions to ensure required fields exist.
+   */
+  private migrateFileMetadata(metadata: FileMetadata): FileMetadata {
+    if (!metadata) return metadata;
+
+    const normalizedPath = normalizePath(metadata.filePath);
+
+    // If symbols exist but lack an ID, backfill them.
+    if (metadata.symbols && metadata.symbols.length > 0) {
+      if (!metadata.symbols[0].id) {
+        for (const symbol of metadata.symbols) {
+          const parentPart = symbol.parentSymbol ? `${symbol.parentSymbol}.` : '';
+          symbol.id = `${normalizedPath}#${parentPart}${symbol.name}:${symbol.kind}`;
+          // Hash will just remain undefined if missing, which is safe.
+        }
+      }
+    }
+
+    return metadata;
   }
 
   /**

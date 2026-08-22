@@ -173,7 +173,25 @@ export class RepositoryAnalyzer {
     );
     const language = detectLanguage(uri.fsPath);
 
-    return analyzeFile(relativePath, content, language);
+    const metadata = analyzeFile(relativePath, content, language);
+    
+    // Preserve existing semantic summaries for unchanged symbols
+    const oldMetadata = await this.metadataStore.loadFileMetadata(relativePath);
+    if (oldMetadata) {
+      if (!metadata.summary && oldMetadata.summary && metadata.hash === oldMetadata.hash) {
+        metadata.summary = oldMetadata.summary;
+      }
+      
+      const oldSymbolMap = new Map(oldMetadata.symbols.map(s => [s.id, s]));
+      for (const newSymbol of metadata.symbols) {
+        const oldSymbol = oldSymbolMap.get(newSymbol.id);
+        if (!newSymbol.summary && oldSymbol && oldSymbol.summary && newSymbol.hash === oldSymbol.hash) {
+          newSymbol.summary = oldSymbol.summary;
+        }
+      }
+    }
+
+    return metadata;
   }
 
   /**
@@ -223,12 +241,34 @@ export class RepositoryAnalyzer {
         const language = detectLanguage(uri.fsPath);
         const metadata = analyzeFile(relativePath, content, language);
 
+        // Preserve existing semantic summaries for unchanged symbols
+        const oldMetadata = await this.metadataStore.loadFileMetadata(relativePath);
+        if (oldMetadata) {
+          if (!metadata.summary && oldMetadata.summary && metadata.hash === oldMetadata.hash) {
+            metadata.summary = oldMetadata.summary;
+          }
+          
+          const oldSymbolMap = new Map(oldMetadata.symbols.map(s => [s.id, s]));
+          for (const newSymbol of metadata.symbols) {
+            const oldSymbol = oldSymbolMap.get(newSymbol.id);
+            if (!newSymbol.summary && oldSymbol && oldSymbol.summary && newSymbol.hash === oldSymbol.hash) {
+              newSymbol.summary = oldSymbol.summary;
+            }
+          }
+        }
+
         // Update index
         this.projectIndex.removeFile(relativePath);
         this.projectIndex.addFile(metadata);
 
         // Persist
         await this.metadataStore.saveFileMetadata(metadata);
+        
+        // Queue for semantic indexing (if needed)
+        if (this.semanticIndexer) {
+          this.semanticIndexer.queueFiles([metadata]);
+        }
+        
         updated++;
       } else {
         unchanged++;

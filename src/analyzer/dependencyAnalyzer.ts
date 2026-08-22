@@ -22,6 +22,7 @@ export function extractImports(
   filePath: string
 ): ImportInfo[] {
   const imports: ImportInfo[] = [];
+  const usedIdentifiers = new Set<string>();
 
   function visit(node: ts.Node): void {
     // ── Static imports: import { X } from './module' ─────────────────
@@ -69,7 +70,11 @@ export function extractImports(
       }
 
       imports.push(importInfo);
-      return;
+      return; // Do NOT recurse into import declaration, so its identifiers aren't marked as "used"
+    }
+
+    if (ts.isIdentifier(node)) {
+      usedIdentifiers.add(node.text);
     }
 
     // ── Dynamic imports: import('./module') ──────────────────────────
@@ -123,6 +128,19 @@ export function extractImports(
   }
 
   visit(sourceFile);
+
+  // Mark unused imports
+  for (const imp of imports) {
+    if (imp.specifiers.length > 0) {
+      const isUsed = imp.specifiers.some(s => usedIdentifiers.has(s));
+      imp.isUnused = !isUsed;
+    } else if (imp.source) {
+      // Dynamic import / require with no specifiers assigned to a variable we can track
+      // We assume it's used for its side effects unless we have specifiers.
+      imp.isUnused = false;
+    }
+  }
+
   return imports;
 }
 

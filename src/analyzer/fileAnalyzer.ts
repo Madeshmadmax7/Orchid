@@ -42,7 +42,7 @@ export function analyzeFile(
   );
 
   // Extract symbols (classes, functions, methods, etc.)
-  const symbols = extractSymbols(sourceFile);
+  const symbols = extractSymbols(sourceFile, filePath);
 
   // Extract imports and exports
   const imports = extractImports(sourceFile, filePath);

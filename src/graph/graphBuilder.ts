@@ -48,32 +48,44 @@ export function buildGraph(files: FileMetadata[]): DependencyGraph {
     graph.addNode(fileNode);
   }
 
-  // ── Phase 2: Add symbol nodes for exported classes/functions ───────
+  // ── Phase 2: Add symbol nodes ───────
   for (const file of files) {
     const normalizedPath = normalizePath(file.filePath);
     for (const symbol of file.symbols) {
-      if (
-        symbol.isExported &&
-        (symbol.kind === 'class' ||
-          symbol.kind === 'function' ||
-          symbol.kind === 'react-component' ||
-          symbol.kind === 'interface')
-      ) {
+      const isTopLevelExport = symbol.isExported && ['class', 'function', 'react-component', 'interface'].includes(symbol.kind);
+      const isMethod = ['method', 'property', 'getter', 'setter'].includes(symbol.kind);
+      
+      if (isTopLevelExport || isMethod) {
         const symbolNode: GraphNode = {
-          id: `symbol:${symbol.name}`,
-          label: symbol.name,
+          id: `symbol:${symbol.id}`,
+          label: symbol.parentSymbol ? `${symbol.parentSymbol}.${symbol.name}` : symbol.name,
           kind: symbol.kind,
           filePath: normalizedPath,
           componentType: file.fileType,
         };
         graph.addNode(symbolNode);
 
-        // Link symbol to its file
-        graph.addEdge(
-          `file:${normalizedPath}`,
-          `symbol:${symbol.name}`,
-          'EXPORTS'
-        );
+        // Link symbol to its file or parent
+        if (isTopLevelExport) {
+          graph.addEdge(`file:${normalizedPath}`, `symbol:${symbol.id}`, 'EXPORTS');
+        } else if (isMethod && symbol.parentSymbol) {
+          // Find the parent class id in the same file
+          const parentSymbol = file.symbols.find(s => s.name === symbol.parentSymbol);
+          if (parentSymbol) {
+            graph.addEdge(`symbol:${parentSymbol.id}`, `symbol:${symbol.id}`, 'CONTAINS');
+          }
+        }
+      }
+    }
+  }
+
+  // Build lookup maps for fast resolution
+  const topLevelExportByName = new Map<string, string>(); // name -> id
+  
+  for (const file of files) {
+    for (const symbol of file.symbols) {
+      if (symbol.isExported) {
+        topLevelExportByName.set(symbol.name, `symbol:${symbol.id}`);
       }
     }
   }
@@ -84,22 +96,17 @@ export function buildGraph(files: FileMetadata[]): DependencyGraph {
     const sourceFileId = `file:${normalizedPath}`;
 
     for (const imp of file.imports) {
-      if (!imp.isLocal) {
-        continue; // Skip external imports for now
-      }
+      if (!imp.isLocal) continue;
 
-      // Try to resolve the import target
       const targetPath = resolveImportTarget(imp.resolvedPath, fileByPath);
       if (targetPath) {
         const targetFileId = `file:${targetPath}`;
-
-        // File-level IMPORTS edge
         graph.addEdge(sourceFileId, targetFileId, 'IMPORTS');
 
-        // Symbol-level USES edges for named imports
         for (const specifier of imp.specifiers) {
-          if (exportToFile.has(specifier)) {
-            graph.addEdge(sourceFileId, `symbol:${specifier}`, 'USES');
+          const targetId = topLevelExportByName.get(specifier);
+          if (targetId) {
+            graph.addEdge(sourceFileId, targetId, 'USES');
           }
         }
       }
@@ -111,23 +118,51 @@ export function buildGraph(files: FileMetadata[]): DependencyGraph {
     for (const symbol of file.symbols) {
       if (symbol.heritage?.extends) {
         for (const parent of symbol.heritage.extends) {
-          if (exportToFile.has(parent)) {
-            graph.addEdge(
-              `symbol:${symbol.name}`,
-              `symbol:${parent}`,
-              'EXTENDS'
-            );
-          }
+          const parentId = topLevelExportByName.get(parent);
+          if (parentId) graph.addEdge(`symbol:${symbol.id}`, parentId, 'EXTENDS');
         }
       }
       if (symbol.heritage?.implements) {
         for (const iface of symbol.heritage.implements) {
-          if (exportToFile.has(iface)) {
-            graph.addEdge(
-              `symbol:${symbol.name}`,
-              `symbol:${iface}`,
-              'IMPLEMENTS'
-            );
+          const ifaceId = topLevelExportByName.get(iface);
+          if (ifaceId) graph.addEdge(`symbol:${symbol.id}`, ifaceId, 'IMPLEMENTS');
+        }
+      }
+    }
+  }
+
+  // ── Phase 5: Add calls edges (AST static resolution) ────────────────────────
+  for (const file of files) {
+    for (const symbol of file.symbols) {
+      if (!symbol.calls) continue;
+
+      for (const call of symbol.calls) {
+        // High confidence direct match to top-level export
+        if (topLevelExportByName.has(call)) {
+          graph.addEdge(`symbol:${symbol.id}`, topLevelExportByName.get(call)!, 'CALLS');
+        } 
+        // Resolve Class Property Method Call: e.g. "this.paymentService.verifyPayment"
+        else if (call.startsWith('this.')) {
+          const parts = call.substring(5).split('.');
+          if (parts.length === 2 && symbol.parentSymbol) {
+            const [propName, methodName] = parts;
+            // 1. Find the property on the current class to get its type
+            const prop = file.symbols.find(s => s.parentSymbol === symbol.parentSymbol && s.name === propName && s.kind === 'property');
+            if (prop && prop.returnType) {
+              const targetClassType = prop.returnType.replace(/[^a-zA-Z0-9_]/g, ''); // strip arrays/generics loosely
+              // 2. Find the target class in exported symbols
+              const targetClassId = topLevelExportByName.get(targetClassType);
+              if (targetClassId) {
+                // 3. Find the target method in the target class's file
+                const targetFile = files.find(f => normalizePath(f.filePath) === normalizePath(targetClassId.split('#')[0].replace('symbol:', '')));
+                if (targetFile) {
+                  const targetMethod = targetFile.symbols.find(s => s.parentSymbol === targetClassType && s.name === methodName);
+                  if (targetMethod) {
+                    graph.addEdge(`symbol:${symbol.id}`, `symbol:${targetMethod.id}`, 'CALLS');
+                  }
+                }
+              }
+            }
           }
         }
       }

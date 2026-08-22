@@ -71,6 +71,15 @@ export class SemanticIndexer {
    */
   private async generateSummary(file: FileMetadata): Promise<void> {
     try {
+      // Find symbols that need summarization (missing summary)
+      const missingSymbols = file.symbols.filter(s => !s.summary);
+      const needsFileSummary = !file.summary;
+
+      // If everything is already summarized by AST or cached, skip LLM call entirely
+      if (missingSymbols.length === 0 && !needsFileSummary) {
+        return;
+      }
+
       // Safely request Copilot models (don't specify family to avoid API errors on older Copilot versions)
       let models = await vscode.lm.selectChatModels({ vendor: 'copilot' });
       
@@ -85,11 +94,16 @@ export class SemanticIndexer {
       // Generate the minimal AST structural summary
       const structuralSummary = generateFileSummary(file);
 
-      const prompt = `You are a code indexer. Read this AST summary and return a valid JSON object. The JSON should map EVERY function, method, class, and interface name to a 1-sentence description (max 15 words) of its specific purpose. Also include a "__file__" key with a 1-sentence summary of the whole file.
+      const symbolNamesToSummarize = missingSymbols.map(s => s.name).join(', ');
+      
+      const prompt = `You are a code indexer. Read this AST summary and return a valid JSON object.
+The JSON MUST contain a 1-sentence description (max 15 words) of its specific purpose for the following symbols ONLY:
+${symbolNamesToSummarize}
+${needsFileSummary ? '\nAlso include a "__file__" key with a 1-sentence summary of the whole file.' : ''}
 
 Format EXACTLY like this (NO markdown blocks, just raw JSON):
 {
-  "__file__": "File purpose here",
+  ${needsFileSummary ? '"__file__": "File purpose here",' : ''}
   "FunctionNameOrMethodName": "Purpose here"
 }
 

@@ -10,6 +10,7 @@ import { DependencyGraph } from '../graph/dependencyGraph';
 import { QueryRouter } from '../retrieval/queryRouter';
 import { SymbolRetriever } from '../retrieval/symbolRetriever';
 import { GraphRetriever } from '../retrieval/graphRetriever';
+import { HybridRetriever } from '../retrieval/hybridRetriever';
 import { ContextRanker } from '../retrieval/contextRanker';
 import { ContextCompressor } from '../retrieval/contextCompressor';
 import { PromptBuilder } from './promptBuilder';
@@ -17,20 +18,23 @@ import { RetrievedContext } from '../types';
 
 export class ChatParticipant {
   private queryRouter: QueryRouter;
-  private symbolRetriever: SymbolRetriever;
-  private graphRetriever: GraphRetriever;
+  private hybridRetriever: HybridRetriever;
   private contextRanker: ContextRanker;
   private promptBuilder: PromptBuilder;
+  private outputChannel: vscode.OutputChannel;
 
   constructor(
     private projectIndex: ProjectIndex,
     private graph: DependencyGraph
   ) {
     this.queryRouter = new QueryRouter();
-    this.symbolRetriever = new SymbolRetriever(this.projectIndex);
-    this.graphRetriever = new GraphRetriever(this.graph, this.projectIndex);
-    this.contextRanker = new ContextRanker();
+    const symbolRetriever = new SymbolRetriever(this.projectIndex);
+    const graphRetriever = new GraphRetriever(this.graph, this.projectIndex);
+    this.hybridRetriever = new HybridRetriever(symbolRetriever, graphRetriever);
+    
+    this.contextRanker = new ContextRanker(this.projectIndex);
     this.promptBuilder = new PromptBuilder(new ContextCompressor());
+    this.outputChannel = vscode.window.createOutputChannel('Orchid Debug');
   }
 
   /**
@@ -67,14 +71,11 @@ export class ChatParticipant {
     // 1. Parse query
     const parsedQuery = this.queryRouter.parseQuery(request.prompt);
 
-    // 2. Retrieve contexts
-    const symbolContexts = this.symbolRetriever.retrieve(parsedQuery);
-    const graphContexts = this.graphRetriever.retrieve(parsedQuery, 1); // Depth 1
-
-    const allContexts = [...symbolContexts, ...graphContexts];
+    // 2. Retrieve contexts using Hybrid Retrieval (Phases 5 & 7)
+    const allContexts = this.hybridRetriever.retrieve(parsedQuery);
 
     // 3. Rank contexts
-    const rankedContexts = this.contextRanker.rank(allContexts, parsedQuery.maxResults);
+    const rankedContexts = this.contextRanker.rank(allContexts, parsedQuery);
 
     // Show retrieved files to user
     const usedFiles = new Set(rankedContexts.map(c => c.filePath));
@@ -87,7 +88,12 @@ export class ChatParticipant {
     }
 
     // 4. Build Prompt
-    const messages = this.promptBuilder.buildPrompt(request, context, rankedContexts);
+    const { messages, tokenCount } = this.promptBuilder.buildPrompt(request, context, rankedContexts);
+
+    // Diagnostics (Phase 11)
+    this.outputChannel.appendLine(`[Query] ${request.prompt}`);
+    this.outputChannel.appendLine(`Retrieved ${rankedContexts.length} nodes from ${usedFiles.size} files.`);
+    this.outputChannel.appendLine(`Estimated Token Consumption: ${tokenCount} tokens.\n`);
 
     // 5. Send to LM
     try {

@@ -82,7 +82,14 @@ export function generateSymbolSummary(symbol: SymbolInfo, allSymbols: SymbolInfo
       const isAsync = child.isAsync ? 'async ' : '';
       const params = child.parameters ? `(${child.parameters.join(', ')})` : '';
       summary += `      * ${isStatic}${isAsync}${child.name}${params}\n`;
+      if (child.summary) summary += `        Summary: ${child.summary}\n`;
+      if (child.throws && child.throws.length > 0) summary += `        Throws: ${child.throws.join(', ')}\n`;
+      if (child.calls && child.calls.length > 0) summary += `        Calls: ${child.calls.join(', ')}\n`;
     });
+  } else {
+    if (symbol.summary) summary += `\n    Summary: ${symbol.summary}`;
+    if (symbol.throws && symbol.throws.length > 0) summary += `\n    Throws: ${symbol.throws.join(', ')}`;
+    if (symbol.calls && symbol.calls.length > 0) summary += `\n    Calls: ${symbol.calls.join(', ')}`;
   }
   
   return summary.trimEnd();

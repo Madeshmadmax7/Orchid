@@ -8,6 +8,7 @@ import { SymbolInfo } from '../../types';
 
 function makeSymbol(overrides: Partial<SymbolInfo>): SymbolInfo {
   return {
+    id: 'test-id',
     name: 'Test',
     kind: 'class',
     startLine: 1,

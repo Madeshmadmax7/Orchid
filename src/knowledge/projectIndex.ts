@@ -31,6 +31,8 @@ export class ProjectIndex {
   private filesByPath: Map<string, FileMetadata> = new Map();
   /** Symbol name → locations */
   private symbolsByName: Map<string, SymbolLocation[]> = new Map();
+  /** Symbol ID → location */
+  private symbolById: Map<string, SymbolLocation> = new Map();
   /** Component type → file paths */
   private filesByType: Map<ComponentType, string[]> = new Map();
   /** File path → exported symbol names */
@@ -62,13 +64,16 @@ export class ProjectIndex {
 
     // Index symbols
     for (const symbol of file.symbols) {
+      const loc = {
+        symbolInfo: symbol,
+        filePath: normalizedPath,
+      };
+
       if (!this.symbolsByName.has(symbol.name)) {
         this.symbolsByName.set(symbol.name, []);
       }
-      this.symbolsByName.get(symbol.name)!.push({
-        symbolInfo: symbol,
-        filePath: normalizedPath,
-      });
+      this.symbolsByName.get(symbol.name)!.push(loc);
+      this.symbolById.set(symbol.id, loc);
     }
 
     // Index by type
@@ -118,6 +123,7 @@ export class ProjectIndex {
           this.symbolsByName.set(symbol.name, filtered);
         }
       }
+      this.symbolById.delete(symbol.id);
     }
 
     // Remove from type index
@@ -179,6 +185,13 @@ export class ProjectIndex {
    */
   getSymbol(name: string): SymbolLocation[] {
     return this.symbolsByName.get(name) ?? [];
+  }
+
+  /**
+   * Looks up a symbol by its unique ID.
+   */
+  getSymbolById(id: string): SymbolLocation | undefined {
+    return this.symbolById.get(id);
   }
 
   /**
