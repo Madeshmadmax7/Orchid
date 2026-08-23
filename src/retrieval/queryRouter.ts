@@ -73,7 +73,7 @@ export class QueryRouter {
     if (/how does.*work|explain.*behavior|what is.*doing/.test(lower)) {
       return 'EXPLAIN';
     }
-    if (/(what happens when|why could).*fail|error|validation|catch|exception/.test(lower)) {
+    if (/(what happens when|why could|what if).*fail|throws|missing|error|validation|catch|exception/.test(lower)) {
       return 'ERROR_VALIDATION';
     }
     if (/how (would|do) i (modify|change|update)/.test(lower)) {

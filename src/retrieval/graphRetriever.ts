@@ -62,8 +62,11 @@ export class GraphRetriever {
 
         const symbolId = `symbol:${match.symbolInfo.id}`;
         seedsWithDepth.set(symbolId, 2);
-        // Also seed the file with 1 hop
-        if (!seedsWithDepth.has(`file:${match.filePath}`)) {
+        // For DEPENDENTS: traverse purely from the symbol — seeding the file would
+        // also traverse its own dependencies, polluting the candidate pool with source files.
+        // For other intents (including DEPENDENCIES): also seed the file for broader traversal.
+        const skipFileSeed = (query.intent === 'DEPENDENTS');
+        if (!skipFileSeed && !seedsWithDepth.has(`file:${match.filePath}`)) {
           seedsWithDepth.set(`file:${match.filePath}`, 1);
         }
       }
@@ -81,21 +84,21 @@ export class GraphRetriever {
     }
 
     // Traverse from seeds
-    // DEBUG
-    console.log("DEBUG: All Graph Nodes:", this.graph.getAllNodes().map(n => n.id));
-    console.log("DEBUG: GraphRetriever built seeds:", Array.from(seedsWithDepth.entries()));
-    
     for (const [seed, depth] of seedsWithDepth.entries()) {
       if (!this.graph.hasNode(seed)) {
-        console.log("DEBUG: Graph is missing seed node:", seed);
         continue;
       }
 
-      // Add the seed itself
+      // Add the seed itself, unless we only care about its neighbors
+      const skipSeedFile = (query.intent === 'DEPENDENTS' || query.intent === 'DEPENDENCIES');
       if (seed.startsWith('file:')) {
-        this.addFileContext(seed.replace('file:', ''), 1.0, contexts, seen);
+        if (!skipSeedFile) {
+          this.addFileContext(seed.replace('file:', ''), 1.0, contexts, seen);
+        }
       } else if (seed.startsWith('symbol:')) {
-        this.addSymbolContext(seed.replace('symbol:', ''), 1.0, contexts, seen);
+        // For DEPENDENTS/DEPENDENCIES, add the seed symbol itself at lower weight for context
+        // but NOT its file (the file is the source, not a neighbor)
+        this.addSymbolContext(seed.replace('symbol:', ''), skipSeedFile ? 0.5 : 1.0, contexts, seen);
       }
 
       if (depth === 0) continue;

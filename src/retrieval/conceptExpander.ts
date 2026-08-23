@@ -1,7 +1,7 @@
 export class ConceptExpander {
   private static dictionary: Record<string, string[]> = {
-    validation: ['validate', 'validator', 'invalid', 'validationerror', 'check', 'verify', 'sanitize', 'throw', 'reject', 'error'],
-    failure: ['fail', 'failed', 'error', 'exception', 'throw', 'catch', 'reject', 'rejected', 'invalid'],
+    validation: ['validate', 'validator', 'invalid', 'validationerror', 'throw', 'error'],
+    failure: ['fail', 'failed', 'error', 'exception', 'throw', 'catch', 'invalid'],
     caller: ['called', 'calls', 'usage', 'uses', 'invokes', 'invoked', 'call'],
     payment: ['pay', 'transaction', 'charge', 'refund', 'fee'],
     auth: ['authentication', 'authorization', 'login', 'logout', 'session', 'token', 'jwt', 'credentials', 'password'],

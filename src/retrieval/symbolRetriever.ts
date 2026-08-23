@@ -71,8 +71,11 @@ export class SymbolRetriever {
       const allFiles = this.projectIndex.getAllFiles();
       
       for (const file of allFiles) {
-        // Match against File summary
-        if (file.summary) {
+        // For directional graph queries, skip file-level lexical matches —
+        // the source file being searched is not a "dependent" of itself
+        const skipFileLexical = (query.intent === 'DEPENDENTS' || query.intent === 'DEPENDENCIES');
+
+        if (!skipFileLexical && file.summary) {
           const fileSummaryLower = file.summary.toLowerCase();
           const exactFileMatch = fileSummaryLower.includes(lowerKeyword);
           
