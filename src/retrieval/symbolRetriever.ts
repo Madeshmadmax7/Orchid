@@ -44,7 +44,7 @@ export class SymbolRetriever {
     for (const targetSymbol of query.targetSymbols) {
       const matches = this.projectIndex.getSymbol(targetSymbol);
       for (const match of matches) {
-        const id = `symbol:${match.filePath}:${match.symbolInfo.name}`;
+        const id = `symbol:${match.symbolInfo.id}`;
         if (!seen.has(id)) {
           seen.add(id);
           const fileMeta = this.projectIndex.getFile(match.filePath);
@@ -111,10 +111,13 @@ export class SymbolRetriever {
           }
         }
 
-        // Match against specific Symbol context
+        // Match against specific Symbol context.
+        // NOTE: parentSymbol is intentionally excluded here — its presence would cause every
+        // child method (e.g., VoiceAssistant.tell_joke) to lexically match a keyword that only
+        // appears in the parent class name (e.g., "voice"), exploding candidate counts.
+        // The parent class itself is retrieved directly via name/summary matches.
         for (const symbol of file.symbols) {
           const fullContext = [
-            symbol.parentSymbol,
             symbol.name,
             symbol.summary,
             ...(symbol.calls || []),
@@ -137,7 +140,7 @@ export class SymbolRetriever {
           }
 
           if (score > 0) {
-            const id = `symbol_summary:${file.filePath}:${symbol.name}`;
+            const id = `symbol_summary:${symbol.id}`;
             const existing = conceptContexts.get(id);
             if (existing) {
               existing.relevanceScore += score * 0.5;

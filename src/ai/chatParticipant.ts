@@ -16,6 +16,8 @@ import { ContextCompressor } from '../retrieval/contextCompressor';
 import { PromptBuilder } from './promptBuilder';
 import { RetrievedContext } from '../types';
 
+export let lastTokenReport: string | undefined;
+
 export class ChatParticipant {
   private queryRouter: QueryRouter;
   private hybridRetriever: HybridRetriever;
@@ -27,7 +29,7 @@ export class ChatParticipant {
     private projectIndex: ProjectIndex,
     private graph: DependencyGraph
   ) {
-    this.queryRouter = new QueryRouter();
+    this.queryRouter = new QueryRouter(this.projectIndex);
     const symbolRetriever = new SymbolRetriever(this.projectIndex);
     const graphRetriever = new GraphRetriever(this.graph, this.projectIndex);
     this.hybridRetriever = new HybridRetriever(symbolRetriever, graphRetriever);
@@ -88,27 +90,99 @@ export class ChatParticipant {
     }
 
     // 4. Build Prompt
-    const { messages, tokenCount } = this.promptBuilder.buildPrompt(request, context, rankedContexts);
+    const { messages, compressionResult } = this.promptBuilder.buildPrompt(request, context, rankedContexts);
+
+    // ── Metrics Tracking for Token Report ──
+    let totalLoc = 0;
+    for (const filePath of this.projectIndex.getAllFilePaths()) {
+      const meta = this.projectIndex.getFile(filePath);
+      if (meta) totalLoc += meta.loc;
+    }
+    const baselineChars = totalLoc * 50; // Using validation mock estimator
+    const baselineTokens = Math.ceil(baselineChars / 4);
+    
+    const orchidChars = compressionResult.text.length;
+    const finalTokens = compressionResult.tokenCount;
+    const candidateTokens = compressionResult.candidateTokenCount;
+    const maxTokens = 1500;
+    const budgetExceeded = finalTokens > maxTokens;
+    
+    const reduction = ((1 - (finalTokens / Math.max(1, baselineTokens))) * 100).toFixed(1);
+
+    const report = 
+`ORCHID TOKEN REPORT
+
+Query:
+"${request.prompt}"
+
+Baseline:
+Characters: ${baselineChars}
+Estimated tokens: ${baselineTokens}
+
+Orchid (Candidate, pre-compression):
+Estimated tokens: ${candidateTokens}
+
+Orchid (Final emitted context):
+Characters: ${orchidChars}
+Estimated tokens: ${finalTokens}
+
+Estimated reduction:
+${reduction}%
+
+Files considered:
+${compressionResult.filesConsidered}
+
+Symbols retrieved:
+${compressionResult.symbolsRetrieved}
+
+Symbols included:
+${compressionResult.symbolsIncluded}
+
+Context levels:
+L1: ${compressionResult.contextLevels.L1}
+L2: ${compressionResult.contextLevels.L2}
+L3: ${compressionResult.contextLevels.L3}
+
+Budget:
+${maxTokens} tokens
+
+Budget exceeded:
+${budgetExceeded ? 'YES' : 'NO'}
+
+Note: These are ESTIMATED tokens. Orchid does not control the final Copilot OpenAI request and cannot report actual downstream API token usage.`;
+
+    lastTokenReport = report;
 
     // Diagnostics (Phase 11)
-    this.outputChannel.appendLine(`[Query] ${request.prompt}`);
-    this.outputChannel.appendLine(`Retrieved ${rankedContexts.length} nodes from ${usedFiles.size} files.`);
-    this.outputChannel.appendLine(`Estimated Token Consumption: ${tokenCount} tokens.\n`);
+    this.outputChannel.appendLine(`\n${report}\n`);
+    this.outputChannel.show(true);
 
     // 5. Send to LM
     try {
-      const chatModels = await vscode.lm.selectChatModels({
-        vendor: 'copilot',
-        family: 'gpt-4o'
-      });
+      let chatModels = await vscode.lm.selectChatModels({ vendor: 'copilot', family: 'gpt-4o' });
+      if (chatModels.length === 0) {
+        chatModels = await vscode.lm.selectChatModels({ vendor: 'copilot', family: 'gpt-4' });
+      }
+      if (chatModels.length === 0) {
+        chatModels = await vscode.lm.selectChatModels({ vendor: 'copilot' });
+      }
+      if (chatModels.length === 0) {
+        chatModels = await vscode.lm.selectChatModels({});
+      }
 
       if (chatModels.length === 0) {
-        response.markdown('Error: Copilot GPT-4o model not found.');
+        response.markdown('Error: No language model is currently available. Please ensure GitHub Copilot is installed and active.');
         return {};
       }
 
-      const model = chatModels[0];
-      const chatResponse = await model.sendRequest(messages, {}, token);
+      // Try to avoid picking embedding or tiny models if possible by sorting/finding
+      let selectedModel = chatModels.find(m => (m.name && m.name.includes('gpt-4o')) || (m.family && m.family.includes('gpt-4o'))) ||
+                          chatModels.find(m => (m.name && m.name.includes('gpt-4')) || (m.family && m.family.includes('gpt-4'))) ||
+                          chatModels[0];
+
+      this.outputChannel.appendLine(`Selected Model: ${selectedModel.vendor} / ${selectedModel.family} (${selectedModel.name || selectedModel.id})`);
+
+      const chatResponse = await selectedModel.sendRequest(messages, {}, token);
 
       for await (const fragment of chatResponse.text) {
         response.markdown(fragment);
@@ -118,7 +192,8 @@ export class ChatParticipant {
       if (err instanceof vscode.LanguageModelError) {
         response.markdown(`\n\n*Error from Language Model: ${err.message}*`);
       } else {
-        throw err;
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        response.markdown(`\n\n*Internal Error: ${errorMsg}*`);
       }
     }
 
