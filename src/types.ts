@@ -11,6 +11,7 @@ export type Language =
   | 'javascript'
   | 'typescriptreact'
   | 'javascriptreact'
+  | 'python'
   | 'unknown';
 
 /**
@@ -280,6 +281,7 @@ export const LANGUAGE_MAP: Record<string, Language> = {
   '.tsx': 'typescriptreact',
   '.js': 'javascript',
   '.jsx': 'javascriptreact',
+  '.py': 'python',
 };
 
 /** Supported file extensions for analysis */
@@ -310,15 +312,20 @@ export type QueryIntent =
   | 'EXPLAIN'
   | 'ERROR_VALIDATION'
   | 'MODIFICATION'
+  | 'TRACE'
   | 'GENERAL';
 
 export interface RetrievalQuery {
   rawQuery: string;
   keywords: string[];
   targetSymbols: string[];
+  /** Source symbols for TRACE queries (e.g. the API endpoint in "how does X reach Y") */
+  sourceSymbols?: string[];
   targetFiles: string[];
   intent: QueryIntent;
   concepts: string[];
   maxResults?: number;
+  /** Graph node IDs of explicitly resolved targets (set by HybridRetriever after resolution) */
+  resolvedTargetIds?: Set<string>;
 }
 

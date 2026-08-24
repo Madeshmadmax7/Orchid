@@ -187,6 +187,51 @@ export class DependencyGraph {
   }
 
   /**
+   * Finds the shortest path between two nodes using BFS.
+   * Returns the ordered list of node IDs (source inclusive, target inclusive),
+   * or null if no path exists within maxDepth hops.
+   * Traverses forward edges (CALLS, IMPORTS, USES, CONTAINS, EXPORTS).
+   */
+  findPath(sourceId: string, targetId: string, maxDepth: number = 4): string[] | null {
+    if (sourceId === targetId) return [sourceId];
+    if (!this.nodes.has(sourceId) || !this.nodes.has(targetId)) return null;
+
+    // BFS with parent tracking for path reconstruction
+    const parent = new Map<string, string>();
+    const queue: Array<{ id: string; depth: number }> = [{ id: sourceId, depth: 0 }];
+    const visited = new Set<string>([sourceId]);
+
+    while (queue.length > 0) {
+      const { id, depth } = queue.shift()!;
+      if (depth >= maxDepth) continue;
+
+      const edges = this.forwardEdges.get(id) ?? [];
+      for (const edge of edges) {
+        const next = edge.target;
+        if (!visited.has(next)) {
+          visited.add(next);
+          parent.set(next, id);
+
+          if (next === targetId) {
+            // Reconstruct path
+            const path: string[] = [];
+            let current: string | undefined = targetId;
+            while (current !== undefined) {
+              path.unshift(current);
+              current = parent.get(current);
+            }
+            return path;
+          }
+
+          queue.push({ id: next, depth: depth + 1 });
+        }
+      }
+    }
+
+    return null;
+  }
+
+  /**
    * BFS traversal in either direction.
    */
   private bfsTraversal(

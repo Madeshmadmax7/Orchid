@@ -18,7 +18,7 @@ export class PromptBuilder {
     request: vscode.ChatRequest,
     context: vscode.ChatContext,
     retrievedContexts: RetrievedContext[]
-  ): { messages: vscode.LanguageModelChatMessage[], tokenCount: number } {
+  ) {
     const messages: vscode.LanguageModelChatMessage[] = [];
 
     // 1. System Prompt
@@ -43,11 +43,12 @@ export class PromptBuilder {
     }
 
     // 3. Current User Prompt + Context
-    const compressionResult = this.compressor.compress(retrievedContexts);
+    const maxTokens = 1500;
+    const compressionResult = this.compressor.compress(retrievedContexts, maxTokens);
     const finalPrompt = `${compressionResult.text}\n\nUser Question:\n${request.prompt}`;
     
     messages.push(vscode.LanguageModelChatMessage.User(finalPrompt));
 
-    return { messages, tokenCount: compressionResult.tokenCount };
+    return { messages, compressionResult };
   }
 }

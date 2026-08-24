@@ -26,8 +26,27 @@ export class ContextRanker {
     // Use raw keywords (not expanded concepts) for specificity bonuses
     const rawKeywordsLower = (query.keywords || []).map(k => k.toLowerCase());
 
+    // Resolved target IDs from SymbolResolver (pre-computed by HybridRetriever)
+    const resolvedTargetIds = query.resolvedTargetIds ?? new Set<string>();
+
     for (const ctx of contexts) {
       let boostedScore = ctx.relevanceScore;
+
+      // ── Identity bonus: explicitly resolved targets always win ─────────
+      // Priority: exact target > structural evidence (throws) > lexical match.
+      // This ensures db.query beats verifyPayment even when verifyPayment has `throws`.
+      const ctxGraphId = ctx.type === 'symbol' && ctx.symbolInfo
+        ? `symbol:${ctx.symbolInfo.id}`
+        : `file:${ctx.filePath}`;
+      if (resolvedTargetIds.has(ctxGraphId)) {
+        boostedScore = Math.min(1.0, boostedScore + 0.5);
+        // Short-circuit further scoring for resolved targets — identity wins
+        const existing = bestScores.get(ctx.id);
+        if (!existing || boostedScore > existing.relevanceScore) {
+          bestScores.set(ctx.id, { ...ctx, relevanceScore: boostedScore });
+        }
+        continue;
+      }
 
       if (ctx.type === 'symbol' && ctx.symbolInfo) {
         const sym = ctx.symbolInfo;
@@ -64,6 +83,17 @@ export class ContextRanker {
             boostedScore -= 0.15;
           }
         }
+
+        // ── MODIFICATION: boost structural types and tests ─────────────────
+        if (query.intent === 'MODIFICATION') {
+          if (kind === 'type' || kind === 'interface') {
+            boostedScore += 0.1;
+          }
+          if (ctx.filePath?.toLowerCase().includes('.test.') || ctx.filePath?.toLowerCase().includes('.spec.')) {
+            boostedScore += 0.1;
+          }
+        }
+
 
         // ── Direct name-match specificity bonus ────────────────────────────
         // Rewards the symbol that IS the named thing (e.g. db.query for "database query")
@@ -167,7 +197,6 @@ export class ContextRanker {
         });
       }
     }
-
-    return result.slice(0, query.maxResults || 15);
+    return result.slice(0, query.maxResults || 100);
   }
 }

@@ -187,6 +187,36 @@ export function extractSymbols(sourceFile: ts.SourceFile, filePath: string = '')
               isAsync: hasAsyncModifier(init),
               parentSymbol: parentName,
             }, decl);
+          } else if (ts.isObjectLiteralExpression(init)) {
+            const isConst = (node.declarationList.flags & ts.NodeFlags.Const) !== 0;
+            // Push the object itself as a constant
+            pushSymbol({
+              name,
+              kind: isConst ? 'constant' : 'variable',
+              startLine: getStartLine(decl, sourceFile),
+              endLine: getEndLine(decl, sourceFile),
+              isExported,
+              parentSymbol: parentName,
+            }, decl);
+
+            // Extract object methods as symbols
+            for (const prop of init.properties) {
+              if (ts.isMethodDeclaration(prop) && prop.name) {
+                const propName = prop.name.getText(sourceFile);
+                pushSymbol({
+                  name: propName,
+                  kind: 'method',
+                  startLine: getStartLine(prop, sourceFile),
+                  endLine: getEndLine(prop, sourceFile),
+                  parameters: extractParameters(prop, sourceFile),
+                  returnType: extractReturnType(prop, sourceFile),
+                  isExported: false, // properties themselves are accessed via the parent
+                  isAsync: hasAsyncModifier(prop),
+                  parentSymbol: name, // The parent is the object variable (e.g. "db")
+                  decorators: extractDecorators(prop, sourceFile),
+                }, prop);
+              }
+            }
           } else {
             // Regular variable/constant declaration
             const isConst =

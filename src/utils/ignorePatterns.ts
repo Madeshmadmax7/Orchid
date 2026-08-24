@@ -19,6 +19,10 @@ export const IGNORED_DIRECTORIES: string[] = [
   '.vscode',
   '.idea',
   '__pycache__',
+  'venv',
+  '.venv',
+  'env',
+  '.env',
   '.cache',
   '.parcel-cache',
   '.turbo',
@@ -69,10 +73,10 @@ export function buildExcludeGlob(): string {
 /**
  * Builds VS Code glob pattern to include only supported source files.
  *
- * @returns A glob pattern like `**\/*.{ts,tsx,js,jsx}`
+ * @returns A glob pattern like `**\/*.{ts,tsx,js,jsx,py}`
  */
 export function buildIncludeGlob(): string {
-  return '**/*.{ts,tsx,js,jsx}';
+  return '**/*.{ts,tsx,js,jsx,py}';
 }
 
 /**

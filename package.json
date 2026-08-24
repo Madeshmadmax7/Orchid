@@ -42,6 +42,11 @@
         "title": "Orchid: Clear Cache",
         "icon": "$(trash)"
       },
+      {
+        "command": "projectMemory.copyLastTokenReport",
+        "title": "Orchid: Copy Last Token Report",
+        "category": "Orchid"
+      },
 
       {
         "command": "projectMemory.search",

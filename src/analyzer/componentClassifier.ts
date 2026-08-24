@@ -235,6 +235,13 @@ function isMainFile(fileName: string): boolean {
     'app.jsx',
     'server.ts',
     'server.js',
+    // Python entry points
+    'main.py',
+    'app.py',
+    'server.py',
+    'wsgi.py',
+    'asgi.py',
+    'run.py',
   ];
   return mainFiles.includes(fileName.toLowerCase());
 }

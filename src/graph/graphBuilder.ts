@@ -165,6 +165,13 @@ export function buildGraph(files: FileMetadata[]): DependencyGraph {
             }
           }
         }
+        else if (call.includes('.')) {
+          const baseObject = call.split('.')[0];
+          if (topLevelExportByName.has(baseObject)) {
+            // Edge to the base object (e.g. `db`)
+            graph.addEdge(`symbol:${symbol.id}`, topLevelExportByName.get(baseObject)!, 'CALLS');
+          }
+        }
       }
     }
   }

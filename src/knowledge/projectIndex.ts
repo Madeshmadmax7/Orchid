@@ -187,9 +187,6 @@ export class ProjectIndex {
     return this.symbolsByName.get(name) ?? [];
   }
 
-  /**
-   * Looks up a symbol by its unique ID.
-   */
   getSymbolById(id: string): SymbolLocation | undefined {
     return this.symbolById.get(id);
   }

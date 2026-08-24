@@ -261,6 +261,22 @@ export function registerCommands(
       }
     })
   );
+
+  // ── Copy Token Report ───────────────────────────────────────────────
+  context.subscriptions.push(
+    vscode.commands.registerCommand('projectMemory.copyLastTokenReport', async () => {
+      // Need to dynamically import ChatParticipant to break circular deps if they exist, 
+      // or just import it at the top of the file
+      const { lastTokenReport } = require('../ai/chatParticipant');
+      if (!lastTokenReport) {
+        vscode.window.showWarningMessage('Project Memory: No token report found. Please make an @orchid request first.');
+        return;
+      }
+      
+      await vscode.env.clipboard.writeText(lastTokenReport);
+      vscode.window.showInformationMessage('Project Memory: Orchid Token Report copied to clipboard.');
+    })
+  );
 }
 
 /**

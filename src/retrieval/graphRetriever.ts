@@ -7,19 +7,30 @@
 import { DependencyGraph } from '../graph/dependencyGraph';
 import { ProjectIndex } from '../knowledge/projectIndex';
 import { RetrievalQuery, RetrievedContext } from '../types';
-import { generateFileSummary } from '../analyzer/componentSummarizer';
+import { generateFileSummary, generateSymbolSummary } from '../analyzer/componentSummarizer';
+import { SymbolResolver } from './symbolResolver';
 
 export class GraphRetriever {
+  private symbolResolver: SymbolResolver;
+
   constructor(
     private graph: DependencyGraph,
     private projectIndex: ProjectIndex
-  ) {}
+  ) {
+    this.symbolResolver = new SymbolResolver(projectIndex);
+  }
 
   /**
    * Retrieves contexts via graph expansion.
-   * Limits expansion: 2 hops for highly relevant symbols, 1 hop for moderately relevant.
+   * For TRACE intent: finds the shortest path between source and target nodes.
+   * For other intents: BFS expansion from seed symbols.
    */
   retrieve(query: RetrievalQuery): RetrievedContext[] {
+    // ── TRACE: structural path retrieval ────────────────────────────────
+    if (query.intent === 'TRACE') {
+      return this.retrievePath(query);
+    }
+
     const contexts: RetrievedContext[] = [];
     const seen = new Set<string>();
 
@@ -101,10 +112,15 @@ export class GraphRetriever {
         this.addSymbolContext(seed.replace('symbol:', ''), skipSeedFile ? 0.5 : 1.0, contexts, seen);
       }
 
-      if (depth === 0) continue;
+      // For most intents, we only traverse semantic/keyword matches (depth > 0).
+      // But for MODIFICATION, we MUST traverse explicit targets (depth 0) to gather their impact.
+      if (depth === 0 && query.intent !== 'MODIFICATION') {
+        continue;
+      }
 
       // Intent-aware traversal
       if (query.intent === 'DEPENDENCIES' || query.intent === 'EXPLAIN' || query.intent === 'GENERAL' || query.intent === 'ERROR_VALIDATION') {
+        // ... skip depth 0 for these because of the above condition
         const deps = this.graph.getTransitiveDependencies(seed, depth);
         for (const dep of deps) {
           const score = 0.8 - (0.1 * depth); // decay score
@@ -127,6 +143,92 @@ export class GraphRetriever {
           }
         }
       }
+
+      // MODIFICATION: strictly bounded traversal to direct callers and direct dependencies
+
+      // Depth 2 is required because if seed is a Class, depth 1 is its methods, depth 2 is what those methods call/are called by.
+      if (query.intent === 'MODIFICATION') {
+        const directDeps = this.graph.getTransitiveDependencies(seed, 2);
+
+        for (const dep of directDeps) {
+          if (dep.startsWith('file:')) this.addFileContext(dep.replace('file:', ''), 0.7, contexts, seen);
+          else if (dep.startsWith('symbol:')) this.addSymbolContext(dep.replace('symbol:', ''), 0.7, contexts, seen);
+        }
+        const directCallers = this.graph.getTransitiveDependents(seed, 2);
+        for (const caller of directCallers) {
+          if (caller.startsWith('file:')) this.addFileContext(caller.replace('file:', ''), 0.7, contexts, seen);
+          else if (caller.startsWith('symbol:')) this.addSymbolContext(caller.replace('symbol:', ''), 0.7, contexts, seen);
+        }
+      }
+    }
+
+    return contexts;
+
+  }
+
+  /**
+   * TRACE path retrieval: finds the shortest structural path between source and target.
+   * Returns path nodes in order (source → ... → target) with decaying relevance scores.
+   * Falls back to BFS expansion from source if no direct path found.
+   */
+  private retrievePath(query: RetrievalQuery): RetrievedContext[] {
+    const contexts: RetrievedContext[] = [];
+    const seen = new Set<string>();
+
+    const sourceSymbols = query.sourceSymbols ?? [];
+    const targetSymbols = query.targetSymbols ?? [];
+
+    // Resolve source and target nodes
+    const resolvedSources = this.symbolResolver.resolve(sourceSymbols, true);
+    const resolvedTargets = this.symbolResolver.resolve(targetSymbols, true);
+
+    // If we have both endpoints, try graph path finding
+    if (resolvedSources.length > 0 && resolvedTargets.length > 0) {
+      const sourceId = resolvedSources[0].graphNodeId;
+      const targetId = resolvedTargets[0].graphNodeId;
+
+      // Try exact symbol-to-symbol path
+      let path = this.graph.findPath(sourceId, targetId, 4);
+
+      // If not found, try via file nodes (file:source → file:target)
+      if (!path) {
+        const srcFilePath = resolvedSources[0].location.filePath;
+        const tgtFilePath = resolvedTargets[0].location.filePath;
+        path = this.graph.findPath(`file:${srcFilePath}`, `file:${tgtFilePath}`, 4);
+      }
+
+      if (path) {
+        // Return all nodes on the path with scores decaying from 1.0
+        const stepScore = 1.0 / path.length;
+        for (let i = 0; i < path.length; i++) {
+          const nodeId = path[i];
+          const score = 1.0 - (i * stepScore * 0.5); // gentle decay
+          if (nodeId.startsWith('symbol:')) {
+            this.addSymbolContext(nodeId.replace('symbol:', ''), score, contexts, seen);
+          } else if (nodeId.startsWith('file:')) {
+            this.addFileContext(nodeId.replace('file:', ''), score, contexts, seen);
+          }
+        }
+        return contexts;
+      }
+    }
+
+    // Fallback: standard expansion from source symbols
+    const fallbackQuery = { ...query, intent: 'GENERAL' as const };
+    const sources = resolvedSources.length > 0
+      ? resolvedSources
+      : this.symbolResolver.resolve(query.targetSymbols, true);
+
+    for (const resolved of sources) {
+      this.addSymbolContext(resolved.location.symbolInfo.id, 0.8, contexts, seen);
+      const deps = this.graph.getTransitiveDependencies(resolved.graphNodeId, 2);
+      for (const dep of deps) {
+        if (dep.startsWith('symbol:')) {
+          this.addSymbolContext(dep.replace('symbol:', ''), 0.6, contexts, seen);
+        } else if (dep.startsWith('file:')) {
+          this.addFileContext(dep.replace('file:', ''), 0.5, contexts, seen);
+        }
+      }
     }
 
     return contexts;
@@ -144,7 +246,7 @@ export class GraphRetriever {
     contexts.push({
       id,
       type: 'symbol',
-      content: fileMeta ? generateFileSummary(fileMeta) : match.symbolInfo.name, // Will be overridden by hybrid retriever if more detailed
+      content: fileMeta ? generateSymbolSummary(match.symbolInfo, fileMeta.symbols) : match.symbolInfo.name, // Will be overridden by hybrid retriever if more detailed
       relevanceScore: score,
       filePath: match.filePath,
       metadata: { kind: match.symbolInfo.kind },

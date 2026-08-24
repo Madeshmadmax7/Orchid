@@ -17,6 +17,7 @@ import { extractImports, extractExports } from './dependencyAnalyzer';
 import { classifyComponent } from './componentClassifier';
 import { computeHash, countLinesOfCode } from '../utils/fileUtils';
 import { getScriptKind } from '../utils/languageDetector';
+import { extractPythonSymbols, extractPythonImports, extractPythonExports } from './pythonAnalyzer';
 
 /**
  * Analyzes a single source file and returns structured metadata.
@@ -31,22 +32,30 @@ export function analyzeFile(
   content: string,
   language: Language
 ): FileMetadata {
-  // Parse the source file into an AST
-  const scriptKind = getScriptKind(language);
-  const sourceFile = ts.createSourceFile(
-    filePath,
-    content,
-    ts.ScriptTarget.Latest,
-    /* setParentNodes */ true,
-    scriptKind as ts.ScriptKind
-  );
+  let symbols, imports, exports;
 
-  // Extract symbols (classes, functions, methods, etc.)
-  const symbols = extractSymbols(sourceFile, filePath);
+  if (language === 'python') {
+    symbols = extractPythonSymbols(content, filePath);
+    imports = extractPythonImports(content);
+    exports = extractPythonExports(content);
+  } else {
+    // Parse the source file into an AST
+    const scriptKind = getScriptKind(language);
+    const sourceFile = ts.createSourceFile(
+      filePath,
+      content,
+      ts.ScriptTarget.Latest,
+      /* setParentNodes */ true,
+      scriptKind as ts.ScriptKind
+    );
 
-  // Extract imports and exports
-  const imports = extractImports(sourceFile, filePath);
-  const exports = extractExports(sourceFile);
+    // Extract symbols (classes, functions, methods, etc.)
+    symbols = extractSymbols(sourceFile, filePath);
+
+    // Extract imports and exports
+    imports = extractImports(sourceFile, filePath);
+    exports = extractExports(sourceFile);
+  }
 
   // Classify the component type
   const fileType = classifyComponent(filePath, symbols);
