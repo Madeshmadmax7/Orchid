@@ -178,7 +178,7 @@ export class ContextCompressor {
       return `- ${symbol.kind} ${symbol.name}: ${symbol.summary || 'No summary'}`;
     } else if (score < 0.8) {
       // Level 2: Compact behavior (includes methods/params)
-      let out = `- ${symbol.kind} ${symbol.name}: ${symbol.summary || 'No summary'}`;
+      let out = `- ${symbol.kind} ${symbol.name} (Lines ${symbol.startLine}-${symbol.endLine}): ${symbol.summary || 'No summary'}`;
       if (symbol.parameters && symbol.parameters.length > 0) {
         out += `\n  Params: ${symbol.parameters.join(', ')}`;
       }
@@ -188,7 +188,7 @@ export class ContextCompressor {
       return out;
     } else {
       // Level 3: Relevant implementation context
-      let out = `- ${symbol.kind} ${symbol.name}: ${symbol.summary || 'No summary'}`;
+      let out = `- ${symbol.kind} ${symbol.name} (Lines ${symbol.startLine}-${symbol.endLine}): ${symbol.summary || 'No summary'}`;
       if (symbol.parameters && symbol.parameters.length > 0) {
         out += `\n  Params: ${symbol.parameters.join(', ')}`;
       }

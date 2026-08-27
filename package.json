@@ -110,7 +110,8 @@
     "compile": "tsc -p ./",
     "lint": "eslint src --ext ts",
     "pretest": "npm run compile",
-    "test": "node ./out/test/runTest.js"
+    "test": "node ./out/test/runTest.js",
+    "test:orchid": "npx ts-node test_diagnostic.ts"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",

@@ -5,14 +5,14 @@ import { normalizePath } from '../utils/fileUtils';
 export function extractPythonSymbols(content: string, filePath: string): SymbolInfo[] {
   const symbols: SymbolInfo[] = [];
   const lines = content.split('\n');
-  // Use the normalized relative path (matching the TS symbolAnalyzer ID format)
   const normalizedPath = normalizePath(filePath);
 
   let currentClass: { name: string; id: string; indent: number } | null = null;
   let currentMethodIndent: number | null = null;
+  
+  const openSymbols: { symbol: SymbolInfo; indent: number }[] = [];
+  let lastNonEmptyLine = 0;
 
-  // Produces IDs consistent with the TypeScript symbolAnalyzer:
-  // e.g. "backend/main.py#ChatRequest:class"
   function generateSymbolId(name: string, kind: string, parentName?: string): string {
     const parentPart = parentName ? `${parentName}.` : '';
     return `${normalizedPath}#${parentPart}${name}:${kind}`;
@@ -20,46 +20,52 @@ export function extractPythonSymbols(content: string, filePath: string): SymbolI
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
+    const trimmed = line.trim();
     const indentMatch = line.match(/^(\s*)/);
     const indent = indentMatch ? indentMatch[1].length : 0;
 
-    // Reset method context if we dedent
+    if (trimmed.length > 0) {
+      while (openSymbols.length > 0 && indent <= openSymbols[openSymbols.length - 1].indent) {
+        openSymbols.pop()!.symbol.endLine = lastNonEmptyLine;
+      }
+      lastNonEmptyLine = i + 1;
+    }
+
     if (currentMethodIndent !== null && indent <= currentMethodIndent) {
-      if (line.trim().length > 0) {
+      if (trimmed.length > 0) {
         currentMethodIndent = null;
       }
     }
 
-    // Reset current class if indentation goes back
     if (currentClass && indent <= currentClass.indent) {
-      if (line.trim().length > 0) {
+      if (trimmed.length > 0) {
         currentClass = null;
         currentMethodIndent = null;
       }
     }
 
-    // Match Class
     const classMatch = line.match(/^\s*class\s+([A-Za-z0-9_]+)(?:\((.*?)\))?:/);
     if (classMatch) {
       const name = classMatch[1];
       const extendsStr = classMatch[2] ? classMatch[2].split(',').map(s => s.trim()) : undefined;
       const id = generateSymbolId(name, 'class');
 
-      symbols.push({
+      const sym: SymbolInfo = {
         id,
         name,
         kind: 'class',
         startLine: i + 1,
-        endLine: i + 1,
+        endLine: i + 1, // Will be updated by dedent logic
         isExported: true,
         heritage: extendsStr ? { extends: extendsStr } : undefined,
-      });
+      };
+      symbols.push(sym);
+      openSymbols.push({ symbol: sym, indent });
 
       currentClass = { name, id, indent };
       continue;
     }
 
-    // Match Function / Method
     const defMatch = line.match(/^\s*(async\s+)?def\s+([A-Za-z0-9_]+)\s*\((.*?)\)(?:\s*->\s*(.*?))?:/);
     if (defMatch) {
       const isAsync = !!defMatch[1];
@@ -90,23 +96,24 @@ export function extractPythonSymbols(content: string, filePath: string): SymbolI
         }
       }
 
-      symbols.push({
+      const sym: SymbolInfo = {
         id,
         name,
         kind,
-        startLine: i + 1,
-        endLine: i + 1,
+        startLine: decorators.length > 0 ? (i + 1 - decorators.length) : i + 1,
+        endLine: i + 1, // Will be updated
         parameters: params,
         returnType,
         isExported: true,
         isAsync,
         parentSymbol,
         decorators: decorators.length > 0 ? decorators : undefined,
-      });
+      };
+      symbols.push(sym);
+      openSymbols.push({ symbol: sym, indent });
       continue;
     }
 
-    // Match Class Property
     if (currentClass && currentMethodIndent === null && indent > currentClass.indent) {
       const propMatch = line.match(/^\s*([A-Za-z0-9_]+)\s*(?::\s*([^=]+))?(?:\s*=\s*(.*))?$/);
       if (propMatch) {
@@ -138,7 +145,6 @@ export function extractPythonSymbols(content: string, filePath: string): SymbolI
       }
     }
 
-    // Match Global Assignment
     const assignMatch = line.match(/^([A-Za-z0-9_]+)\s*=\s*(.*)/);
     if (assignMatch && indent === 0) {
       const name = assignMatch[1];
@@ -152,6 +158,10 @@ export function extractPythonSymbols(content: string, filePath: string): SymbolI
         isExported: true,
       });
     }
+  }
+
+  while (openSymbols.length > 0) {
+    openSymbols.pop()!.symbol.endLine = lastNonEmptyLine || 1;
   }
 
   return symbols;
