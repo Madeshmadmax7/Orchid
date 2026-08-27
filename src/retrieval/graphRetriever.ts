@@ -113,14 +113,13 @@ export class GraphRetriever {
       }
 
       // For most intents, we only traverse semantic/keyword matches (depth > 0).
-      // But for MODIFICATION, we MUST traverse explicit targets (depth 0) to gather their impact.
-      if (depth === 0 && query.intent !== 'MODIFICATION') {
+      // Depth-0 seeds have already been added as seed context above; skip edge traversal.
+      if (depth === 0) {
         continue;
       }
 
       // Intent-aware traversal
       if (query.intent === 'DEPENDENCIES' || query.intent === 'EXPLAIN' || query.intent === 'GENERAL' || query.intent === 'ERROR_VALIDATION') {
-        // ... skip depth 0 for these because of the above condition
         const deps = this.graph.getTransitiveDependencies(seed, depth);
         for (const dep of deps) {
           const score = 0.8 - (0.1 * depth); // decay score
@@ -141,23 +140,6 @@ export class GraphRetriever {
           } else if (dep.startsWith('symbol:')) {
             this.addSymbolContext(dep.replace('symbol:', ''), score, contexts, seen);
           }
-        }
-      }
-
-      // MODIFICATION: strictly bounded traversal to direct callers and direct dependencies
-
-      // Depth 2 is required because if seed is a Class, depth 1 is its methods, depth 2 is what those methods call/are called by.
-      if (query.intent === 'MODIFICATION') {
-        const directDeps = this.graph.getTransitiveDependencies(seed, 2);
-
-        for (const dep of directDeps) {
-          if (dep.startsWith('file:')) this.addFileContext(dep.replace('file:', ''), 0.7, contexts, seen);
-          else if (dep.startsWith('symbol:')) this.addSymbolContext(dep.replace('symbol:', ''), 0.7, contexts, seen);
-        }
-        const directCallers = this.graph.getTransitiveDependents(seed, 2);
-        for (const caller of directCallers) {
-          if (caller.startsWith('file:')) this.addFileContext(caller.replace('file:', ''), 0.7, contexts, seen);
-          else if (caller.startsWith('symbol:')) this.addSymbolContext(caller.replace('symbol:', ''), 0.7, contexts, seen);
         }
       }
     }

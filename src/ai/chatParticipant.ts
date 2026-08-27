@@ -32,7 +32,7 @@ export class ChatParticipant {
     this.queryRouter = new QueryRouter(this.projectIndex);
     const symbolRetriever = new SymbolRetriever(this.projectIndex);
     const graphRetriever = new GraphRetriever(this.graph, this.projectIndex);
-    this.hybridRetriever = new HybridRetriever(symbolRetriever, graphRetriever);
+    this.hybridRetriever = new HybridRetriever(symbolRetriever, graphRetriever, undefined, this.projectIndex);
     
     this.contextRanker = new ContextRanker(this.projectIndex);
     this.promptBuilder = new PromptBuilder(new ContextCompressor());

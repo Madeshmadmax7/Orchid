@@ -71,17 +71,19 @@ export class HybridRetriever {
     let results = Array.from(merged.values());
 
     // ── Broad Project Overview Fallback ──
-    // Activates when retrieval produces zero candidates and one of:
-    //   (a) The query has NO explicit targets (genuinely broad/project-level queries)
-    //   (b) The query intent is MODIFICATION — even if QueryRouter extracted capitalised
-    //       words like "Add"/"Jarvis" as targets, those are not real code symbols.
-    //       A MODIFICATION request with no resolved symbols still needs architectural
-    //       context (entry points, routing, module structure) to guide the LLM.
+    // Activates when retrieval produces zero candidates and the query has NO explicit
+    // symbol or file targets — i.e. it is a genuinely broad, project-level request.
     //
-    // NOT triggered for EXPLAIN/GENERAL queries with unresolved targets, e.g.:
-    //   "explain nonexistentFunction"  → hasExplicitTarget=true, intent=GENERAL → blocked ✓
+    // Examples that trigger fallback:
+    //   "add logout support"        → no explicit target → overview
+    //   "add notification support"  → no explicit target → overview
+    //   "explain how jarvis works"  → no explicit target → overview
+    //
+    // Examples that do NOT trigger fallback:
+    //   "explain nonexistentFunction" → explicit target → blocked
+    //   "rename VoiceRequest"         → explicit target → blocked (normal symbol retrieval)
     const hasExplicitTarget = query.targetSymbols.length > 0 || query.targetFiles.length > 0;
-    const allowFallback = !hasExplicitTarget || query.intent === 'MODIFICATION';
+    const allowFallback = !hasExplicitTarget;
     if (results.length === 0 && allowFallback && this.projectIndex) {
       const allFiles = this.projectIndex.getAllFiles();
       let fallbackFiles = allFiles.filter(f => f.fileType === 'main');

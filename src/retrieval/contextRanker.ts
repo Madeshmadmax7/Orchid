@@ -84,16 +84,6 @@ export class ContextRanker {
           }
         }
 
-        // ── MODIFICATION: boost structural types and tests ─────────────────
-        if (query.intent === 'MODIFICATION') {
-          if (kind === 'type' || kind === 'interface') {
-            boostedScore += 0.1;
-          }
-          if (ctx.filePath?.toLowerCase().includes('.test.') || ctx.filePath?.toLowerCase().includes('.spec.')) {
-            boostedScore += 0.1;
-          }
-        }
-
 
         // ── Direct name-match specificity bonus ────────────────────────────
         // Rewards the symbol that IS the named thing (e.g. db.query for "database query")

@@ -21,15 +21,18 @@ export class PromptBuilder {
   ) {
     const messages: vscode.LanguageModelChatMessage[] = [];
 
-    // 1. System Prompt
-    let systemInstruction = 
-      'You are Project Memory, an expert software architect assistant.\n' +
-      'Use the provided RELEVANT PROJECT CONTEXT to accurately answer the user\'s question.\n' +
-      'The context contains deterministic structural data (AST extraction) about the user\'s codebase.\n' +
-      'If the context does not contain the answer, say so, but use your general knowledge if applicable.\n' +
-      'Do not guess file paths or component names unless they are in the context.';
-    
-    messages.push(vscode.LanguageModelChatMessage.User(systemInstruction));
+    // 1. Unified System Prompt
+    // Intent classification is handled by Copilot natively from the original user request.
+    // Orchid's role is to supply accurate, grounded project context only.
+    const systemInstruction =
+      'You are Project Memory, an expert software assistant.\n' +
+      'Use the provided RELEVANT PROJECT CONTEXT to answer the user\'s request accurately.\n' +
+      'The context contains deterministic structural data (AST extraction) from the user\'s codebase.\n' +
+      'If the user is asking a question or requesting an explanation, use the context to explain.\n' +
+      'If the user is asking to write, change, modify, refactor, or implement code, act as a developer ' +
+      'and provide concrete code modifications grounded in the supplied project context.\n' +
+      'Do not invent files, symbols, APIs, or implementation details not supported by the context.\n' +
+      'If the available context is insufficient, clearly state what additional context is required.';
 
     // 2. Chat History (simplified)
     for (const msg of context.history) {
@@ -45,7 +48,8 @@ export class PromptBuilder {
     // 3. Current User Prompt + Context
     const maxTokens = 1500;
     const compressionResult = this.compressor.compress(retrievedContexts, maxTokens);
-    const finalPrompt = `${compressionResult.text}\n\nUser Question:\n${request.prompt}`;
+    
+    const finalPrompt = `${systemInstruction}\n\n=== PROJECT CONTEXT ===\n${compressionResult.text}\n=======================\n\nUser Question:\n${request.prompt}`;
     
     messages.push(vscode.LanguageModelChatMessage.User(finalPrompt));
 

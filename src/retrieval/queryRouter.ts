@@ -37,7 +37,7 @@ export class QueryRouter {
       
       if (!cleanToken) { continue; }
 
-      if (fileRegex.test(cleanToken) || cleanToken.includes('/')) {
+      if (fileRegex.test(cleanToken) || (cleanToken.includes('/') && fileRegex.test(cleanToken))) {
         targetFiles.push(cleanToken);
       } else if (symbolRegex.test(cleanToken)) {
         // ── Distinguish code identifiers from ordinary English words ─────────
@@ -130,11 +130,6 @@ export class QueryRouter {
     }
     if (/(what happens when|why could|what if).*fail|throws|missing|error|validation|catch|exception/.test(lower)) {
       return { intent: 'ERROR_VALIDATION' };
-    }
-    // Structural intent for MODIFICATION: starts with an imperative verb or asks how to modify
-    if (/^(add|fix|update|implement|change|refactor|remove|reject|support)\b/i.test(query.trim()) || 
-        /how (would|do) i (modify|change|update)/.test(lower)) {
-      return { intent: 'MODIFICATION' };
     }
 
     return { intent: 'GENERAL' };
