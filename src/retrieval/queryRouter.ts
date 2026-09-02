@@ -128,6 +128,9 @@ export class QueryRouter {
     if (/how does.*work|explain.*behavior|what is.*doing/.test(lower)) {
       return { intent: 'EXPLAIN' };
     }
+    if (/\b(add|create|implement|write|build|generate|refactor|rename|delete|remove|move|update|change|fix|modify)\b/.test(lower)) {
+      return { intent: 'MODIFICATION' };
+    }
     if (/(what happens when|why could|what if).*fail|throws|missing|error|validation|catch|exception/.test(lower)) {
       return { intent: 'ERROR_VALIDATION' };
     }

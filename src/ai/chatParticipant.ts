@@ -14,6 +14,7 @@ import { HybridRetriever } from '../retrieval/hybridRetriever';
 import { ContextRanker } from '../retrieval/contextRanker';
 import { ContextCompressor } from '../retrieval/contextCompressor';
 import { PromptBuilder } from './promptBuilder';
+import { ModelSelector } from './modelSelector';
 import { RetrievedContext } from '../types';
 
 export let lastTokenReport: string | undefined;
@@ -90,7 +91,7 @@ export class ChatParticipant {
     }
 
     // 4. Build Prompt
-    const { messages, compressionResult } = this.promptBuilder.buildPrompt(request, context, rankedContexts);
+    const { messages, compressionResult } = this.promptBuilder.buildPrompt(request, context, rankedContexts, parsedQuery.intent);
 
     // ── Metrics Tracking for Token Report ──
     let totalLoc = 0;
@@ -104,7 +105,7 @@ export class ChatParticipant {
     const orchidChars = compressionResult.text.length;
     const finalTokens = compressionResult.tokenCount;
     const candidateTokens = compressionResult.candidateTokenCount;
-    const maxTokens = 1500;
+    const maxTokens = 6000;
     const budgetExceeded = finalTokens > maxTokens;
     
     const reduction = ((1 - (finalTokens / Math.max(1, baselineTokens))) * 100).toFixed(1);
@@ -157,34 +158,31 @@ Note: These are ESTIMATED tokens. Orchid does not control the final Copilot Open
     this.outputChannel.appendLine(`\n${report}\n`);
     this.outputChannel.show(true);
 
-    // 5. Send to LM
+    // 5. Smart Model Selection
+    const modelResult = await ModelSelector.selectForTask(
+      parsedQuery.intent,
+      request.prompt,
+      this.outputChannel
+    );
+
+    if (!modelResult) {
+      response.markdown('⚠️ No language model is currently available. Please ensure GitHub Copilot is installed and active.');
+      return {};
+    }
+
+    const selectedModel = modelResult.model;
+    response.progress(`Using ${modelResult.label} (${modelResult.tier} tier)...`);
+
+    // Track whether Orchid successfully answered
+    let orchidAnswered = false;
+    let orchidResponseText = '';
+
+    // 6. Send to LM
     try {
-      let chatModels = await vscode.lm.selectChatModels({ vendor: 'copilot', family: 'gpt-4o' });
-      if (chatModels.length === 0) {
-        chatModels = await vscode.lm.selectChatModels({ vendor: 'copilot', family: 'gpt-4' });
-      }
-      if (chatModels.length === 0) {
-        chatModels = await vscode.lm.selectChatModels({ vendor: 'copilot' });
-      }
-      if (chatModels.length === 0) {
-        chatModels = await vscode.lm.selectChatModels({});
-      }
-
-      if (chatModels.length === 0) {
-        response.markdown('Error: No language model is currently available. Please ensure GitHub Copilot is installed and active.');
-        return {};
-      }
-
-      // Try to avoid picking embedding or tiny models if possible by sorting/finding
-      let selectedModel = chatModels.find(m => (m.name && m.name.includes('gpt-4o')) || (m.family && m.family.includes('gpt-4o'))) ||
-                          chatModels.find(m => (m.name && m.name.includes('gpt-4')) || (m.family && m.family.includes('gpt-4'))) ||
-                          chatModels[0];
-
-      this.outputChannel.appendLine(`Selected Model: ${selectedModel.vendor} / ${selectedModel.family} (${selectedModel.name || selectedModel.id})`);
 
       const editFileTool: vscode.LanguageModelChatTool = {
         name: 'orchid_edit',
-        description: 'Edit files in the workspace. Use this when the user asks you to write, modify, or delete code.',
+        description: 'Edit existing files in the workspace. You MUST use this tool whenever the user asks you to write, add, modify, or delete any code in an existing file. NEVER output raw fenced code blocks as a substitute for this tool call. Always call orchid_read_source first to get the exact current file content, then use this tool with a precise originalText match. Write complete, production-ready code — no placeholder comments, no stubs.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -199,8 +197,8 @@ Note: These are ESTIMATED tokens. Orchid does not control the final Copilot Open
                     items: {
                       type: 'object',
                       properties: {
-                        originalText: { type: 'string', description: 'The exact existing text to replace' },
-                        replacementText: { type: 'string', description: 'The new text' }
+                        originalText: { type: 'string', description: 'The exact existing text to replace. Must match exactly what orchid_read_source returned.' },
+                        replacementText: { type: 'string', description: 'The complete new text. Must be fully implemented with no placeholders.' }
                       },
                       required: ['originalText', 'replacementText']
                     }
@@ -211,6 +209,19 @@ Note: These are ESTIMATED tokens. Orchid does not control the final Copilot Open
             }
           },
           required: ['modifications']
+        }
+      };
+
+      const createFileTool: vscode.LanguageModelChatTool = {
+        name: 'orchid_create_file',
+        description: 'Create a brand-new file in the workspace with the given content. Use this when the user asks you to create a new file. Write 100% complete, production-ready file content — no placeholders, no stubs.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            filePath: { type: 'string', description: 'Absolute or relative path to the new file' },
+            content: { type: 'string', description: 'The complete content to write to the new file' }
+          },
+          required: ['filePath', 'content']
         }
       };
 
@@ -230,18 +241,38 @@ Note: These are ESTIMATED tokens. Orchid does not control the final Copilot Open
 
       let isDone = false;
       while (!isDone) {
-        const chatResponse = await selectedModel.sendRequest(messages, { tools: [editFileTool, readSourceTool] }, token);
+        const chatResponse = await selectedModel.sendRequest(
+          messages,
+          { tools: [editFileTool, createFileTool, readSourceTool] },
+          token
+        );
 
         let toolCallPart: vscode.LanguageModelToolCallPart | undefined;
+        // Buffer text so we can suppress it when the LLM is making a tool call.
+        // Without this, text like "Here's the code:" gets streamed into chat
+        // even when the actual edit is about to happen via orchid_edit.
+        let textBuffer = '';
 
         for await (const fragment of chatResponse.stream) {
           if (fragment instanceof vscode.LanguageModelToolCallPart) {
             toolCallPart = fragment;
+            // Discard any text buffered so far — the LLM is doing an edit, not explaining
+            textBuffer = '';
           } else if (fragment instanceof vscode.LanguageModelTextPart) {
-            response.markdown(fragment.value);
+            if (!toolCallPart) {
+              textBuffer += fragment.value;
+            }
           } else if (typeof fragment === 'string') {
-            response.markdown(fragment);
+            if (!toolCallPart) {
+              textBuffer += fragment;
+            }
           }
+        }
+
+        // Only emit text when the response had NO tool call (pure explanation / Q&A)
+        if (!toolCallPart && textBuffer.trim()) {
+          response.markdown(textBuffer);
+          orchidResponseText += textBuffer;
         }
 
         if (toolCallPart && toolCallPart.name === 'orchid_read_source') {
@@ -285,6 +316,50 @@ Note: These are ESTIMATED tokens. Orchid does not control the final Copilot Open
             messages.push(vscode.LanguageModelChatMessage.Assistant([toolCallPart]));
             messages.push(vscode.LanguageModelChatMessage.User([resultPart]));
           }
+        } else if (toolCallPart && toolCallPart.name === 'orchid_create_file') {
+          response.progress('Creating new file...');
+          const args = toolCallPart.input as any;
+          try {
+            let uri: vscode.Uri;
+            if (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
+              const wsPath = vscode.workspace.workspaceFolders[0].uri.fsPath;
+              const path = require('path');
+              const fullPath = path.isAbsolute(args.filePath) ? args.filePath : path.resolve(wsPath, args.filePath);
+              uri = vscode.Uri.file(fullPath);
+            } else {
+              uri = vscode.Uri.file(args.filePath);
+            }
+
+            const workspaceEdit = new vscode.WorkspaceEdit();
+            workspaceEdit.createFile(uri, { ignoreIfExists: false, overwrite: false });
+            workspaceEdit.insert(uri, new vscode.Position(0, 0), args.content);
+            const success = await vscode.workspace.applyEdit(workspaceEdit);
+
+            if (success) {
+              // Open the newly created file in the editor
+              await vscode.window.showTextDocument(uri);
+              const resultPart = new vscode.LanguageModelToolResultPart(toolCallPart.callId, [
+                new vscode.LanguageModelTextPart(`File created successfully: ${args.filePath}`)
+              ]);
+              messages.push(vscode.LanguageModelChatMessage.Assistant([toolCallPart]));
+              messages.push(vscode.LanguageModelChatMessage.User([resultPart]));
+              response.markdown(`\n\n✅ *Created \`${args.filePath}\`. File is now open in the editor.*`);
+              isDone = true;
+            } else {
+              const resultPart = new vscode.LanguageModelToolResultPart(toolCallPart.callId, [
+                new vscode.LanguageModelTextPart(`Failed to create file: ${args.filePath}`)
+              ]);
+              messages.push(vscode.LanguageModelChatMessage.Assistant([toolCallPart]));
+              messages.push(vscode.LanguageModelChatMessage.User([resultPart]));
+            }
+          } catch (e) {
+            const errorMsg = e instanceof Error ? e.message : String(e);
+            const resultPart = new vscode.LanguageModelToolResultPart(toolCallPart.callId, [
+              new vscode.LanguageModelTextPart(`Internal error creating file: ${errorMsg}`)
+            ]);
+            messages.push(vscode.LanguageModelChatMessage.Assistant([toolCallPart]));
+            messages.push(vscode.LanguageModelChatMessage.User([resultPart]));
+          }
         } else if (toolCallPart && toolCallPart.name === 'orchid_edit') {
           response.progress('Applying workspace edits...');
           const args = toolCallPart.input as any;
@@ -301,7 +376,6 @@ Note: These are ESTIMATED tokens. Orchid does not control the final Copilot Open
                 let uri: vscode.Uri;
                 if (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
                   const wsPath = vscode.workspace.workspaceFolders[0].uri.fsPath;
-                  // Handle absolute vs relative
                   const path = require('path');
                   const fullPath = path.isAbsolute(mod.filePath) ? mod.filePath : path.resolve(wsPath, mod.filePath);
                   uri = vscode.Uri.file(fullPath);
@@ -309,7 +383,7 @@ Note: These are ESTIMATED tokens. Orchid does not control the final Copilot Open
                   uri = vscode.Uri.file(mod.filePath);
                 }
 
-                // Check file exists
+                // Open file
                 let doc: vscode.TextDocument;
                 try {
                   doc = await vscode.workspace.openTextDocument(uri);
@@ -357,7 +431,7 @@ Note: These are ESTIMATED tokens. Orchid does not control the final Copilot Open
                   ]);
                   messages.push(vscode.LanguageModelChatMessage.Assistant([toolCallPart]));
                   messages.push(vscode.LanguageModelChatMessage.User([resultPart]));
-                  response.markdown('\n\n✅ *Applied workspace edits. Please review the unsaved changes.*');
+                  response.markdown('\n\n✅ *Applied edits directly in the editor. Review the unsaved changes.*');
                   isDone = true;
                 } else {
                   const resultPart = new vscode.LanguageModelToolResultPart(toolCallPart.callId, [
@@ -382,12 +456,72 @@ Note: These are ESTIMATED tokens. Orchid does not control the final Copilot Open
           isDone = true;
         }
       }
+
+      orchidAnswered = true;
     } catch (err) {
-      if (err instanceof vscode.LanguageModelError) {
-        response.markdown(`\n\n*Error from Language Model: ${err.message}*`);
-      } else {
-        const errorMsg = err instanceof Error ? err.message : String(err);
-        response.markdown(`\n\n*Internal Error: ${errorMsg}*`);
+      // Orchid's LM call failed — will fall back to Copilot below
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      this.outputChannel.appendLine(`[Orchid] LM error, falling back to Copilot: ${errorMsg}`);
+      orchidAnswered = false;
+    }
+
+    // ── Check if Orchid's response indicates it couldn't answer ──────────
+    if (orchidAnswered && orchidResponseText) {
+      const cantAnswerPatterns = [
+        /i don'?t have enough context/i,
+        /insufficient context/i,
+        /cannot answer/i,
+        /can'?t answer/i,
+        /no relevant (project )?context found/i,
+        /i'?m unable to/i,
+        /i don'?t have (the |enough )?information/i,
+        /outside (of )?my (knowledge|context)/i,
+        /not (enough|sufficient) (context|information|data)/i,
+        /beyond (the |my )?(available |provided )?context/i,
+      ];
+      const looksLikeCantAnswer = cantAnswerPatterns.some(p => p.test(orchidResponseText));
+      if (looksLikeCantAnswer) {
+        this.outputChannel.appendLine('[Orchid] Response indicates insufficient context. Falling back to Copilot.');
+        orchidAnswered = false;
+      }
+    }
+
+    // ── Copilot Fallback ─────────────────────────────────────────────────
+    // When Orchid can't answer, re-send the user's raw query to the same
+    // model without project context or tools — so it works like normal Copilot.
+    if (!orchidAnswered) {
+      try {
+        response.progress('Orchid context insufficient — answering with Copilot...');
+
+        const fallbackMessages: vscode.LanguageModelChatMessage[] = [];
+
+        // Replay chat history
+        for (const msg of context.history) {
+          if (msg instanceof vscode.ChatRequestTurn) {
+            fallbackMessages.push(vscode.LanguageModelChatMessage.User(msg.prompt));
+          } else if (msg instanceof vscode.ChatResponseTurn) {
+            const textParts = msg.response.map(r => r.value).join('');
+            fallbackMessages.push(vscode.LanguageModelChatMessage.Assistant(textParts));
+          }
+        }
+
+        // Send raw user prompt — no system instructions, no project context, no tools
+        fallbackMessages.push(vscode.LanguageModelChatMessage.User(request.prompt));
+
+        const fallbackResponse = await selectedModel.sendRequest(fallbackMessages, {}, token);
+
+        response.markdown('\n\n---\nℹ️ *Orchid didn\'t have enough project context for this query. Answering using Copilot:*\n\n');
+
+        for await (const fragment of fallbackResponse.stream) {
+          if (fragment instanceof vscode.LanguageModelTextPart) {
+            response.markdown(fragment.value);
+          } else if (typeof fragment === 'string') {
+            response.markdown(fragment);
+          }
+        }
+      } catch (fallbackErr) {
+        const errorMsg = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
+        response.markdown(`\n\n*Error: Could not get a response. ${errorMsg}*`);
       }
     }
 
